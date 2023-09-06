@@ -1,17 +1,16 @@
 import cv2
 import numpy as np
+import time
 
-camera = cv2.VideoCapture("carros3.mp4")
+camera = cv2.VideoCapture("carros.mp4")
 
 TEXT_COLOR = (0, 255, 0)
 TRACKER_COLOR = (255, 0, 0)
 FONT = cv2.FONT_HERSHEY_COMPLEX
-minArea = 3000
+min_area = 5000
+max_area = 9000
 
-
-
-fgbgKnn = cv2.createBackgroundSubtractorKNN()
-
+delay=60
 
 def getCenter(x, y, w, h):
     x1 = int(w / 2)
@@ -34,11 +33,11 @@ def getFilter(frame, filter):
         return cv2.morphologyEx(frame, kernel, iterations=2)
     
     if filter == 'combine':
-        kernel = np.ones((2,2),np.uint8)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)) #kernel forma uma matriz de 5x5 com uma elipse
 
-        opening = cv2.morphologyEx(frame, cv2.MORPH_OPEN, kernel, iterations=4)
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=2)
-        dilation = cv2.morphologyEx(closing, cv2.MORPH_DILATE, kernel, iterations=5)
+        opening = cv2.morphologyEx(frame, cv2.MORPH_OPEN, kernel, iterations=2)
+        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=6)
+        dilation = cv2.morphologyEx(closing, cv2.MORPH_DILATE, kernel, iterations=6)
 
         return dilation
 
@@ -48,24 +47,39 @@ def main():
     up=0
     down=0
     total=0
+    offset = 7
     while camera.isOpened:
         check, frame = camera.read()
         if not check:
             print("Erro")
             break
 
-        frame = cv2.resize(frame, (0,0), fx=0.5, fy=0.5)
+        tempo = float(1/60)
+        time.sleep(tempo)
+
+        # frame = cv2.resize(frame, (0,0), fx=0.3, fy=0.3)
+        height, width, channels = frame.shape
+        scale=22
+        #prepare the crop
+        centerX,centerY=int(height/2),int(width/2)
+        radiusX,radiusY= int(scale*height/100),int(scale*width/100)
+
+        minX,maxX=centerX-radiusX,centerX+radiusX
+        minY,maxY=centerY-radiusY,centerY+radiusY
+
+        cropped = frame[minX:maxX, minY:maxY]
+        frame = cv2.resize(cropped, (0,0), fx=0.6, fy=0.6) 
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray,(3,3),5)
 
-        fmask = fgbg.apply(gray)
+        fmask = fgbg.apply(blur)
 
-
-        retval, th = cv2.threshold(fmask, 100, 255, cv2.THRESH_BINARY)
+        retval, th = cv2.threshold(fmask, 110, 255, cv2.THRESH_BINARY)
 
         fmask = getFilter(th, 'combine')
 
-        # fgbg = cv2.medianBlur(fgbg, 5)
+        # fmask = cv2.medianBlur(fmask, 5)
         # result = cv2.bitwise_and(frame, frame, mask=fgbg)
 
         # adicionar linha
@@ -76,65 +90,44 @@ def main():
         middle = int(height/2)
 
         cv2.line(frame,(0,middle), (width, middle), TEXT_COLOR, 2 )
+        cv2.line(frame,(0,middle+30), (width, middle+30), TEXT_COLOR, 2 )
+        cv2.line(frame,(0,middle-30), (width, middle-30), TEXT_COLOR, 2 )
+        cv2.putText(frame, "VEICULOS: "+str(total), (10, 70), FONT, 0.5, (0,255,255),2)
 
-        contours, hierarchy = cv2.findContours(fmask, cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        contours, hierarchy = cv2.findContours(fmask, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
 
-        count = 0
-        for cnt in contours:
+        for (i, cnt) in enumerate(contours):
             area = cv2.contourArea(cnt)
             (x,y,w,h) = cv2.boundingRect(cnt)
-
+            print(area, min_area)
             # verificar a area é suficiente, eliminar ruido
-            if(area > minArea):
+            if(area > min_area and area < max_area):
                 centro = getCenter(x,y,w,h)
 
                 # 4=tamanho | -1 preenchido
                 cv2.circle(frame, centro, 4, (0,0,255), -1)
                 cv2.rectangle(frame,(x,y), (x+w,y+h),TRACKER_COLOR, 2)
-                cv2.putText(frame, str(count), (x-5, y-5), FONT, 0.5, (0,255,255),2)
 
+                if centro[1] < abs(middle+30) and centro[1] > abs(middle-30):
+                    detects.append(centro)
 
-                if len(detects) <= 1:
-                    detects.append([])
-                
-                # if centro[1] > middle-30 and centro[1] < middle+30:
-                detects[count].append(centro)
-
-                print(count)
-                
-                count += 1
-
-
-        # if len(contours) ==0:
-        #     detects.clear()
-        else:
-            for dt in detects:
-                for (i,el) in enumerate(dt):
-                    if dt[i-1][1] < middle and el[1] > middle:
-                        dt.clear()
-                        up+=1
+                for (x,y) in detects:
+                    if y <= abs(middle+offset) and y >= abs(middle-offset):
                         total+=1
-                        print('subiu')
-                        continue
+                        cv2.line(frame,(0,middle), (width, middle), (0,255,255), 2 )
+                        detects.remove((x,y))
+                        print("Carros detectados:" +str(total))
 
-                    if dt[i-1][1] > middle and el[1] < middle:
-                        dt.clear()
-                        down+=1
-                        total+=1
-                        print('desceu')
-                        continue
-           
-                       
-                
+
+        if len(contours) ==0:
+            detects.clear()
 
         cv2.imshow('Frame', frame)
         # cv2.imshow('gray', gray)
         cv2.imshow('fmask', fmask)
         # cv2.imshow('th', th)
-   
 
-
-        if cv2.waitKey(50) & 0xFF == ord("q"):
+        if cv2.waitKey(30) & 0xFF == ord("q"):
             break
 
     camera.release()
