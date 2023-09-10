@@ -1,6 +1,4 @@
 import cv2
-import numpy as np
-import time
 
 camera = cv2.VideoCapture("carros.mp4")
 
@@ -10,8 +8,6 @@ FONT = cv2.FONT_HERSHEY_COMPLEX
 min_area = 5000
 max_area = 9000
 
-delay=60
-
 def getCenter(x, y, w, h):
     x1 = int(w / 2)
     y1 = int(h / 2)
@@ -19,68 +15,46 @@ def getCenter(x, y, w, h):
     cy = y + y1
     return cx,cy
 
-def getFilter(frame, filter):
-    if filter == 'closing':
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        return cv2.morphologyEx(frame, cv2.MORPH_CLOSE, kernel, iterations=2)
-    
-    if filter == 'opening':
-        # kernel = np.ones((5,5),np.uint8)
-        return cv2.morphologyEx(frame, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)), iterations=2)
-    
-    if filter == 'dilation':
-        kernel = np.ones((5,5),np.uint8)
-        return cv2.morphologyEx(frame, kernel, iterations=2)
-    
-    if filter == 'combine':
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)) #kernel forma uma matriz de 5x5 com uma elipse
+def zoom(frame):
+    height, width, channels = frame.shape
+    scale=22
+    #prepare the crop
+    centerX,centerY=int(height/2),int(width/2)
+    radiusX,radiusY= int(scale*height/100),int(scale*width/100)
 
-        opening = cv2.morphologyEx(frame, cv2.MORPH_OPEN, kernel, iterations=2)
-        closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=6)
-        dilation = cv2.morphologyEx(closing, cv2.MORPH_DILATE, kernel, iterations=6)
+    minX,maxX=centerX-radiusX,centerX+radiusX
+    minY,maxY=centerY-radiusY,centerY+radiusY
 
-        return dilation
+    cropped = frame[minX:maxX, minY:maxY]
+    return cv2.resize(cropped, (0,0), fx=0.6, fy=0.6) 
+
+def applyFilter(frame):
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)) 
+        
+        morph = cv2.morphologyEx(frame, cv2.MORPH_OPEN, kernel, iterations=2)
+        morph = cv2.morphologyEx(morph, cv2.MORPH_CLOSE, kernel, iterations=6)
+        morph = cv2.morphologyEx(morph, cv2.MORPH_DILATE, kernel, iterations=6)
+        return morph
 
 def main():
     fgbg = cv2.createBackgroundSubtractorMOG2()
     detects = []
-    up=0
-    down=0
     total=0
     offset = 7
     while camera.isOpened:
         check, frame = camera.read()
-        if not check:
-            print("Erro")
-            break
-
-        tempo = float(1/60)
-        time.sleep(tempo)
-
-        # frame = cv2.resize(frame, (0,0), fx=0.3, fy=0.3)
-        height, width, channels = frame.shape
-        scale=22
-        #prepare the crop
-        centerX,centerY=int(height/2),int(width/2)
-        radiusX,radiusY= int(scale*height/100),int(scale*width/100)
-
-        minX,maxX=centerX-radiusX,centerX+radiusX
-        minY,maxY=centerY-radiusY,centerY+radiusY
-
-        cropped = frame[minX:maxX, minY:maxY]
-        frame = cv2.resize(cropped, (0,0), fx=0.6, fy=0.6) 
+        
+        frame = zoom(frame)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
         blur = cv2.GaussianBlur(gray,(3,3),5)
 
         fmask = fgbg.apply(blur)
 
         retval, th = cv2.threshold(fmask, 110, 255, cv2.THRESH_BINARY)
 
-        fmask = getFilter(th, 'combine')
-
-        # fmask = cv2.medianBlur(fmask, 5)
-        # result = cv2.bitwise_and(frame, frame, mask=fgbg)
+        fmask = applyFilter(th)
 
         # adicionar linha
         dimension = frame.shape
@@ -92,14 +66,16 @@ def main():
         cv2.line(frame,(0,middle), (width, middle), TEXT_COLOR, 2 )
         cv2.line(frame,(0,middle+30), (width, middle+30), TEXT_COLOR, 2 )
         cv2.line(frame,(0,middle-30), (width, middle-30), TEXT_COLOR, 2 )
-        cv2.putText(frame, "VEICULOS: "+str(total), (10, 70), FONT, 0.5, (0,255,255),2)
+        
+ 
+        cv2.putText(frame, "VEICULOS: "+str(total), (10, 70), FONT, 0.5, (0,255,255),1)
 
         contours, hierarchy = cv2.findContours(fmask, cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
 
         for (i, cnt) in enumerate(contours):
             area = cv2.contourArea(cnt)
             (x,y,w,h) = cv2.boundingRect(cnt)
-            print(area, min_area)
+            
             # verificar a area é suficiente, eliminar ruido
             if(area > min_area and area < max_area):
                 centro = getCenter(x,y,w,h)
@@ -124,6 +100,7 @@ def main():
 
         cv2.imshow('Frame', frame)
         # cv2.imshow('gray', gray)
+        # cv2.imshow('blur', blur)
         cv2.imshow('fmask', fmask)
         # cv2.imshow('th', th)
 
